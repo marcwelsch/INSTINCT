@@ -33,6 +33,7 @@ NAV::MavlinkSend::MavlinkSend()
     // _guiConfigDefaultWindowSize = {}; // TODO: define, once node is about to be finished
 
     nm::CreateInputPin(this, "PosVelAtt", Pin::Type::Flow, { NAV::PosVelAtt::type() }, &MavlinkSend::receivePosVelAtt);
+    nm::CreateInputPin(this, "PosVelAttRef", Pin::Type::Flow, { NAV::PosVelAtt::type() }, &MavlinkSend::receivePosVelAttRef);
 }
 
 NAV::MavlinkSend::~MavlinkSend()
@@ -175,6 +176,29 @@ void NAV::MavlinkSend::guiConfig()
             }
             ImGui::Unindent();
         }
+
+        if (ImGui::Checkbox(fmt::format("Send SET_POSITION_TARGET_LOCAL_NED (#84) ##{}", size_t(id)).c_str(), &_SET_POSITION_TARGET_LOCAL_NED_Active))
+        {
+            flow::ApplyChanges();
+            LOG_DEBUG("{}: SET_POSITION_TARGET_LOCAL_NED changed to {}", nameId(), _SET_POSITION_TARGET_LOCAL_NED_Active);
+        }
+        if (_SET_POSITION_TARGET_LOCAL_NED_Active)
+        {
+            ImGui::Indent();
+            ImGui::SetNextItemWidth(columnWidth);
+            if (ImGui::RadioButton(fmt::format("Send a position setpoint##{}", size_t(id)).c_str(), reinterpret_cast<int*>(&_setpointType), static_cast<int>(SetpointType::Position_Ref)))
+            {
+                LOG_DEBUG("{}: POS_REF_Active changed to {}", nameId(), fmt::underlying(_setpointType));
+                flow::ApplyChanges();
+            }
+            if (ImGui::RadioButton(fmt::format("Send a velocity setpoint##{}", size_t(id)).c_str(), reinterpret_cast<int*>(&_setpointType), static_cast<int>(SetpointType::Velocity_Ref)))
+            {
+                LOG_DEBUG("{}: POS_REF_Active changed to {}", nameId(), fmt::underlying(_setpointType));
+                flow::ApplyChanges();
+            }
+            ImGui::Unindent();
+        }
+
         ImGui::TreePop();
     }
 }
@@ -203,6 +227,9 @@ json NAV::MavlinkSend::save() const
 
     j["ATT_POS_MOCAP_Active"] = _ATT_POS_MOCAP_Active;
     j["ATT_POS_MOCAP_Frequency"] = _ATT_POS_MOCAP_Frequency;
+
+    j["setpointType"] = _setpointType;
+    j["SET_POSITION_TARGET_LOCAL_NED_Active"] = _SET_POSITION_TARGET_LOCAL_NED_Active;
     return j;
 }
 
@@ -250,7 +277,17 @@ void NAV::MavlinkSend::restore(json const& j)
     {
         j.at("ATT_POS_MOCAP_Frequency").get_to(_ATT_POS_MOCAP_Frequency);
     }
+
+    if (j.contains("setpointType"))
+    {
+        j.at("setpointType").get_to(_setpointType);
+    }
+    if (j.contains("SET_POSITION_TARGET_LOCAL_NED_Active"))
+    {
+        j.at("SET_POSITION_TARGET_LOCAL_NED_Active").get_to(_SET_POSITION_TARGET_LOCAL_NED_Active);
+    }
 }
+
 bool NAV::MavlinkSend::initialize()
 {
     if (_portType == PortType::UDP_Port)
@@ -286,12 +323,26 @@ bool NAV::MavlinkSend::initialize()
         return false;
     }
 
+    if (_SET_POSITION_TARGET_LOCAL_NED_Active)
+    {
+        autopilot_interface.enable_offboard_control();
+        usleep(100); // give some time to let it sink in
+        // now the autopilot is accepting setpoint commands
+    }
+
     return true;
 }
 
 void NAV::MavlinkSend::deinitialize()
 {
     LOG_TRACE("{}: called", nameId());
+
+    if (_SET_POSITION_TARGET_LOCAL_NED_Active)
+    {
+        autopilot_interface.disable_offboard_control();
+        // now pixhawk isn't listening to setpoint commands
+    }
+
     autopilot_interface.stop();
     port->stop(); // Close Port
 }
@@ -324,6 +375,46 @@ void NAV::MavlinkSend::receivePosVelAtt(NAV::InputPin::NodeDataQueue& queue, siz
     auto ve = static_cast<float>(posVelAtt->n_velocity().y()); // GPS velocity in east direction in earth-fixed NED frame
     auto vd = static_cast<float>(posVelAtt->n_velocity().z()); // GPS velocity in down direction in earth-fixed NED frame
     autopilot_interface.setGPS(lat_d, lon_d, alt, vn, ve, vd, time_week_ms, time_week);
+}
+
+void NAV::MavlinkSend::receivePosVelAttRef(NAV::InputPin::NodeDataQueue& queue, size_t /* pinIdx */) // NOLINT(readability-convert-member-functions-to-static)
+{
+    auto posVelAttRef = std::make_shared<PosVelAtt>(*std::static_pointer_cast<const PosVelAtt>(queue.extract_front()));
+
+    mavlink_set_position_target_local_ned_t sp;
+    mavlink_set_position_target_local_ned_t ip = autopilot_interface.initial_position;
+
+    if (_SET_POSITION_TARGET_LOCAL_NED_Active)
+    {
+        if (_setpointType == SetpointType::Position_Ref)
+        {
+            // Position Reference Message
+            auto x_ref = ip.x;
+            auto y_ref = ip.y;
+            auto z_ref = -static_cast<float>(posVelAttRef->altitude()); // Altitude (MSL)  Positive for up (m)
+            set_position(x_ref,                                         // [m]
+                         y_ref,                                         // [m]
+                         z_ref,                                         // [m]
+                         sp);
+        }
+        else if (_setpointType == SetpointType::Velocity_Ref)
+        {
+            // Velocity Reference Message
+            auto vn_ref = static_cast<float>(posVelAttRef->n_velocity().x());
+            auto ve_ref = static_cast<float>(posVelAttRef->n_velocity().y());
+            auto vd_ref = static_cast<float>(posVelAttRef->n_velocity().z());
+            set_velocity(vn_ref, // [m/s]
+                         ve_ref, // [m/s]
+                         vd_ref, // [m/s]
+                         sp);
+
+            // Append Yaw Command
+            // set_yaw( ip.yaw + 90.0/180.0*M_PI, // [rad]
+            //          sp     );
+        }
+
+        autopilot_interface.update_setpoint(sp);
+    }
 }
 
 const char* NAV::MavlinkSend::convertArrayToIPAddress(const std::array<int, 4>& ipArray)
