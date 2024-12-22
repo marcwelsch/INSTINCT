@@ -78,6 +78,7 @@ class MavlinkSend : public Node
     /// @param[in] queue Queue with all the received data messages
     /// @param[in] pinIdx Index of the pin the data is received on
     void receivePosVelAtt(InputPin::NodeDataQueue& queue, size_t pinIdx);
+    void receivePosVelAttRef(InputPin::NodeDataQueue& queue, size_t pinIdx);
 
     /// Available PortTypes
     enum class PortType
@@ -86,6 +87,14 @@ class MavlinkSend : public Node
         UDP_Port,    /// UDP_Port
     };
     PortType _portType = PortType::UDP_Port;
+
+    /// Available SetpointTypes
+    enum class SetpointType
+    {
+        Position_Ref, /// Position_Ref
+        Velocity_Ref, /// Velocity_Ref
+    };
+    SetpointType _setpointType = SetpointType::Velocity_Ref;
 
     /// IPv4 address
     std::array<int, 4> _ip{ 127, 0, 0, 1 };
@@ -154,5 +163,8 @@ class MavlinkSend : public Node
 
     /// Determines how often the Mavlink message "ATT_POS_MOCAP (#138)" is sent
     double _ATT_POS_MOCAP_Frequency = 10;
+
+    /// Determines whether the Mavlink message "SET_POSITION_TARGET_LOCAL_NED (#84)" is sent
+    bool _SET_POSITION_TARGET_LOCAL_NED_Active = false;
 };
 } // namespace NAV
