@@ -97,6 +97,12 @@ void NAV::DetectAndAvoid::recvPosVelAtt(InputPin::NodeDataQueue& queue, size_t /
 void NAV::DetectAndAvoid::invokeCallbackWithPosVelAtt(const PosVelAtt& posVelAtt)
 {
     auto posVelAtt_solution = std::make_shared<PosVelAtt>();
+
+    Eigen::Vector3<double> n_vel(0.0, 0.0, -1.0);
+
     posVelAtt_solution->insTime = posVelAtt.insTime;
+    posVelAtt_solution->setVelocity_n(n_vel);
+    // posVelAtt_solution->setPosition_lla(lla_position);
+
     invokeCallbacks(OUTPUT_PORT_INDEX_SOLUTION, posVelAtt_solution);
 }

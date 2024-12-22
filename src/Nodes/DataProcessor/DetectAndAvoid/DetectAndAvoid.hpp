@@ -14,6 +14,7 @@
 #pragma once
 
 #include <cstddef>
+#include "util/Eigen.hpp"
 #include "internal/Node/Node.hpp"
 #include "NodeData/State/PosVelAtt.hpp"
 
